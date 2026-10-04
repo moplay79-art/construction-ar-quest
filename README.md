@@ -1,30 +1,46 @@
-# Construction AR Quest — v0.5.1 Offline
+# Construction AR Quest — v0.6 Controller / Offline
 
-Correctif de la v0.5.
+Version issue des essais réels sur Meta Quest 3.
 
-## Correction
-La v0.5 contenait une erreur JavaScript qui empêchait `checkSupport()` de s'exécuter.
-Le symptôme était exactement : **Détection WebXR…** qui restait affiché sans évoluer.
+## Corrections
+1. Retour du vrai pas-à-pas :
+   - 1er clic : placement + Bases
+   - joystick : réglage
+   - 2e clic : verrouillage / mémorisation
+   - clic suivant : Poteaux
+   - clic suivant : Poutres
+   - clic suivant : Chevrons / tasseaux
+   - clic suivant : Pergola complète
 
-La v0.5.1 corrige cette erreur et utilise un nouveau nom de cache Service Worker
-pour ne pas conserver l'ancienne page cassée.
+2. Placement sans boutons d'écran en MR :
+   - joystick gauche : translation au sol
+   - joystick droit gauche/droite : rotation
+   - joystick droit haut/bas : hauteur
+   - maintenir Grip : mode fin
+
+3. Les boutons HTML sont désactivés en immersion afin d'éviter les blocages rencontrés
+   lors du déplacement par boutons.
+
+4. Le mode hors ligne, la mémoire du chantier et l'ancrage persistant sont conservés.
 
 ## Mise à jour GitHub
-Remplacer TOUS les fichiers de la v0.5 par ceux de cette v0.5.1 :
-- index.html
-- sw.js
-- manifest.webmanifest
-- icon-192.png
-- icon-512.png
+Remplacer tous les fichiers précédents par ceux de ce paquet puis Commit changes.
 
-Après le commit, ouvrir l'URL Quest avec `?v=051` une première fois, par exemple :
-`https://...github.io/construction-ar-quest/?v=051`
+Première ouverture conseillée :
+`...?v=060`
 
-Cela force le navigateur à demander la nouvelle page.
-Une fois la nouvelle version chargée, le cache hors ligne v0.5.1 prend le relais.
+Le nouveau Service Worker utilise un cache v0.6, donc l'ancienne copie v0.5.1 sera remplacée.
 
-## Résultat attendu
-La ligne ne doit plus rester sur « Détection WebXR… ».
-Elle doit passer à :
-`Quest/WebXR MR détecté ✓`
-ou afficher une erreur explicite si WebXR n'est pas disponible.
+## Test Quest conseillé
+1. Entrer en MR.
+2. Viser le sol + gâchette.
+3. Vérifier que seules les bases sont visibles.
+4. Déplacer avec le joystick gauche.
+5. Tourner / régler la hauteur avec le joystick droit.
+6. Maintenir Grip et vérifier que le mouvement devient plus lent.
+7. Gâchette pour verrouiller.
+8. Gâchette : poteaux.
+9. Gâchette : poutres.
+10. Gâchette : chevrons/tasseaux.
+11. Gâchette : pergola complète.
+12. Marcher autour et vérifier l'ancrage.

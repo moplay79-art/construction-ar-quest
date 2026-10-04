@@ -1,6 +1,12 @@
-JavaScript syntax: OK
-checkSupport present: OK
-offline setup present: OK
-new cache version: OK
-literal broken \\n removed: OK
+JavaScript: OK
+stage starts at bases: OK
+second trigger locks: OK
+no stage cycling: OK
+controller polling: OK
+left joystick movement: OK
+right joystick rotate/height: OK
+grip fine mode: OK
+screen controls disabled in XR: OK
+offline cache v0.6: OK
+persistent anchor retained: OK
 Syntaxe JavaScript OK
