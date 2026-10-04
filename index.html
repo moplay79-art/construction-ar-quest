@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#101418">
-<title>Construction AR — Quest 3 WebXR v0.1</title>
+<title>Construction AR — Quest 3 WebXR v0.2</title>
 <style>
 :root { color-scheme: dark; font-family: system-ui, sans-serif; }
 html,body { margin:0; width:100%; height:100%; background:#101418; color:#eef3f7; overflow:hidden; }
@@ -38,7 +38,7 @@ body.xr #xrHelp { display:block; }
 <canvas id="canvas"></canvas>
 
 <div id="panel">
-  <h1>Construction AR — Pergola</h1>
+  <h1>Construction AR — Pergola v0.2</h1>
   <div id="support" class="status">Détection WebXR…</div>
 
   <div class="config">
@@ -56,9 +56,24 @@ body.xr #xrHelp { display:block; }
   </div>
 
   <div id="xrHelp">
-    <button id="next" class="primary">Étape suivante</button>
-    <button id="reset" class="warn">Replacer</button>
-    <button id="saveAnchor">Sauver l’ancre</button>
+    <div class="small"><b>Placement précis :</b> règle la pergola puis verrouille-la avant de marcher autour.</div>
+    <div style="margin-top:6px">
+      <label>Pas <select id="nudge"><option value="0.01">1 cm</option><option value="0.05">5 cm</option><option value="0.10">10 cm</option></select></label>
+    </div>
+    <div style="margin-top:6px">
+      <button id="forward">↑ Avant</button><button id="back">↓ Arrière</button>
+      <button id="left">← Gauche</button><button id="right">Droite →</button>
+      <button id="up">+ Haut</button><button id="down">− Bas</button>
+    </div>
+    <div>
+      <button id="rotL">↶ 1°</button><button id="rotR">↷ 1°</button>
+      <button id="lock" class="primary">🔒 Verrouiller ici</button>
+    </div>
+    <div>
+      <button id="next">Étape suivante</button>
+      <button id="reset" class="warn">Replacer</button>
+      <button id="saveAnchor">Sauver la position</button>
+    </div>
   </div>
 
   <div id="step">
@@ -82,6 +97,7 @@ const demoBtn = document.getElementById('demo');
 const nextBtn = document.getElementById('next');
 const resetBtn = document.getElementById('reset');
 const saveAnchorBtn = document.getElementById('saveAnchor');
+const lockBtn = document.getElementById('lock');
 const stepTitle = document.getElementById('stepTitle');
 const stepHint = document.getElementById('stepHint');
 const anchorStatus = document.getElementById('anchorStatus');
@@ -89,7 +105,7 @@ const anchorStatus = document.getElementById('anchorStatus');
 let gl = null, program = null, cube = null;
 let xrSession = null, refSpace = null, viewerSpace = null, hitTestSource = null;
 let lastHit = null, lastViewer = null, persistentAnchor = null;
-let placed = false, rootPos = [0,0,0], rootYaw = 0, stage = 0;
+let placed = false, locked = false, rootPos = [0,0,0], rootYaw = 0, stage = 0;
 let demoMode = false, rafId = 0;
 
 const STEPS = [
@@ -263,7 +279,10 @@ async function enterXR(){
     };
     xrSession=await navigator.xr.requestSession('immersive-ar',opts);
     document.body.classList.add('xr');
-    xrSession.updateRenderState({baseLayer:new XRWebGLLayer(xrSession,gl,{alpha:true, framebufferScaleFactor:1.2})});
+    xrSession.updateRenderState({
+      baseLayer:new XRWebGLLayer(xrSession,gl,{alpha:true, framebufferScaleFactor:1.2}),
+      depthNear:0.01, depthFar:80
+    });
     refSpace=await xrSession.requestReferenceSpace('local-floor');
     viewerSpace=await xrSession.requestReferenceSpace('viewer');
 
@@ -277,8 +296,8 @@ async function enterXR(){
     if(h && xrSession.restorePersistentAnchor){
       try{
         persistentAnchor=await xrSession.restorePersistentAnchor(h);
-        placed=true; stage=1; updateStep();
-        anchorStatus.textContent="Ancre persistante restaurée.";
+        placed=true; locked=true; stage=1; updateStep();
+        anchorStatus.textContent="Ancre persistante restaurée — tu peux marcher autour.";
       }catch(e){
         anchorStatus.textContent="Ancre précédente non restaurée : nouveau placement requis.";
       }
@@ -304,36 +323,70 @@ async function onSelect(){
         rootPos=[pose.transform.position.x,pose.transform.position.y,pose.transform.position.z];
         if(lastViewer){
           const m=lastViewer.transform.matrix;
-          const rightX=m[0], rightZ=m[2];
-          rootYaw=Math.atan2(-rightZ,rightX);
+          const fx=-m[8], fz=-m[10];
+          rootYaw=Math.atan2(fx,fz);
         }
-        placed=true; stage=1; updateStep();
-        if(lastHit.createAnchor){
-          try{ persistentAnchor=await lastHit.createAnchor(); }catch(e){}
-        }
+        placed=true; locked=false; stage=1; updateStep();
+        anchorStatus.textContent="Placement provisoire : règle puis verrouille.";
         return;
       }
     }
-    // fallback: 2m ahead, floor Y=0 in local-floor
     if(lastViewer){
       const m=lastViewer.transform.matrix;
       const fx=-m[8], fz=-m[10];
       rootPos=[m[12]+fx*2,0,m[14]+fz*2];
-      const rightX=m[0], rightZ=m[2];
-      rootYaw=Math.atan2(-rightZ,rightX);
-      placed=true; stage=1; updateStep();
+      rootYaw=Math.atan2(fx,fz);
+      placed=true; locked=false; stage=1; updateStep();
+      anchorStatus.textContent="Placement provisoire : règle puis verrouille.";
     }
-  } else {
+  } else if(locked) {
     nextStage();
+  } else {
+    anchorStatus.textContent="Règle la position puis appuie sur Verrouiller ici.";
   }
 }
 
 function nextStage(){
+  if(!locked){ anchorStatus.textContent="Verrouille d'abord la position."; return; }
   stage = stage>=5 ? 1 : stage+1;
   updateStep();
 }
+function nudge(kind, amount){
+  if(!placed || locked) { if(locked) anchorStatus.textContent="Replacer pour modifier une position verrouillée."; return; }
+  const c=Math.cos(rootYaw), q=Math.sin(rootYaw);
+  if(kind==="right"){ rootPos[0]+=c*amount; rootPos[2]+=-q*amount; }
+  if(kind==="forward"){ rootPos[0]+=q*amount; rootPos[2]+=c*amount; }
+  if(kind==="up") rootPos[1]+=amount;
+}
+function rotateDeg(deg){
+  if(!placed || locked) { if(locked) anchorStatus.textContent="Replacer pour modifier l'orientation."; return; }
+  rootYaw += deg*Math.PI/180;
+}
+async function lockPlacement(){
+  if(!placed){ anchorStatus.textContent="Place d'abord la pergola."; return; }
+  if(persistentAnchor && persistentAnchor.delete){ try{persistentAnchor.delete();}catch(e){} }
+  persistentAnchor=null;
+  if(xrSession && xrSession.createAnchor){
+    try{
+      const rigid=new XRRigidTransform(
+        {x:rootPos[0],y:rootPos[1],z:rootPos[2]},
+        {x:0,y:Math.sin(rootYaw/2),z:0,w:Math.cos(rootYaw/2)}
+      );
+      persistentAnchor=await xrSession.createAnchor(rigid,refSpace);
+      locked=true;
+      anchorStatus.textContent="Ancre spatiale créée ✓ Tu peux maintenant marcher autour.";
+    }catch(e){
+      locked=true;
+      anchorStatus.textContent="Position verrouillée dans l'espace local.";
+    }
+  } else {
+    locked=true;
+    anchorStatus.textContent="Position verrouillée dans l'espace local.";
+  }
+}
 function resetPlacement(){
-  placed=false; stage=0; persistentAnchor=null;
+  if(persistentAnchor && persistentAnchor.delete){ try{persistentAnchor.delete();}catch(e){} }
+  placed=false; locked=false; stage=0; persistentAnchor=null;
   anchorStatus.textContent="Placement réinitialisé.";
   updateStep();
 }
@@ -342,6 +395,7 @@ async function saveAnchor(){
     anchorStatus.textContent="Place d'abord la pergola.";
     return;
   }
+  if(!persistentAnchor){ await lockPlacement(); }
   if(!persistentAnchor && xrSession.createAnchor){
     try{
       const rigid=new XRRigidTransform(
@@ -387,11 +441,13 @@ function onXRFrame(t,frame){
 
   const layer=session.renderState.baseLayer;
   gl.bindFramebuffer(gl.FRAMEBUFFER,layer.framebuffer);
-  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
 
   for(const view of pose.views){
     const vp=layer.getViewport(view);
     gl.viewport(vp.x,vp.y,vp.width,vp.height);
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(vp.x,vp.y,vp.width,vp.height);
+    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     const viewProj=mul(view.projectionMatrix,view.transform.inverse.matrix);
 
     if(!placed && lastHit){
@@ -404,6 +460,7 @@ function onXRFrame(t,frame){
     }
     if(placed) renderPergola(viewProj);
   }
+  gl.disable(gl.SCISSOR_TEST);
   session.requestAnimationFrame(onXRFrame);
 }
 
@@ -446,6 +503,15 @@ demoBtn.addEventListener('click',demo);
 nextBtn.addEventListener('click',nextStage);
 resetBtn.addEventListener('click',resetPlacement);
 saveAnchorBtn.addEventListener('click',saveAnchor);
+lockBtn.addEventListener('click',lockPlacement);
+document.getElementById('left').addEventListener('click',()=>nudge('right',-parseFloat(document.getElementById('nudge').value)));
+document.getElementById('right').addEventListener('click',()=>nudge('right',parseFloat(document.getElementById('nudge').value)));
+document.getElementById('forward').addEventListener('click',()=>nudge('forward',parseFloat(document.getElementById('nudge').value)));
+document.getElementById('back').addEventListener('click',()=>nudge('forward',-parseFloat(document.getElementById('nudge').value)));
+document.getElementById('up').addEventListener('click',()=>nudge('up',parseFloat(document.getElementById('nudge').value)));
+document.getElementById('down').addEventListener('click',()=>nudge('up',-parseFloat(document.getElementById('nudge').value)));
+document.getElementById('rotL').addEventListener('click',()=>rotateDeg(-1));
+document.getElementById('rotR').addEventListener('click',()=>rotateDeg(1));
 window.addEventListener('resize',resize);
 updateStep();
 checkSupport();
