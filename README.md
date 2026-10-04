@@ -1,16 +1,30 @@
-# Construction AR Quest — v0.5 Offline
+# Construction AR Quest — v0.5.1 Offline
 
-## Objectif
-Après un premier chargement en ligne, l'application est mise en cache localement sur le Quest.
+Correctif de la v0.5.
 
-## Test
-1. Mettre tous les fichiers de ce dossier à la racine du dépôt GitHub Pages.
-2. Ouvrir la page en ligne sur le Quest.
-3. Attendre le message « Mode hors ligne préparé ».
-4. Fermer puis rouvrir une fois la page en ligne.
-5. Couper le Wi-Fi du Quest.
-6. Rouvrir la même adresse.
-7. Vérifier que l'application s'ouvre et que le chantier/ancrage restent disponibles.
+## Correction
+La v0.5 contenait une erreur JavaScript qui empêchait `checkSupport()` de s'exécuter.
+Le symptôme était exactement : **Détection WebXR…** qui restait affiché sans évoluer.
 
-## Important
-Cette v0.5 utilise un Service Worker. Le tout premier chargement reste nécessaire via HTTPS. La cible finale la plus robuste reste une PWA WebXR empaquetée / application installée localement sur le Quest.
+La v0.5.1 corrige cette erreur et utilise un nouveau nom de cache Service Worker
+pour ne pas conserver l'ancienne page cassée.
+
+## Mise à jour GitHub
+Remplacer TOUS les fichiers de la v0.5 par ceux de cette v0.5.1 :
+- index.html
+- sw.js
+- manifest.webmanifest
+- icon-192.png
+- icon-512.png
+
+Après le commit, ouvrir l'URL Quest avec `?v=051` une première fois, par exemple :
+`https://...github.io/construction-ar-quest/?v=051`
+
+Cela force le navigateur à demander la nouvelle page.
+Une fois la nouvelle version chargée, le cache hors ligne v0.5.1 prend le relais.
+
+## Résultat attendu
+La ligne ne doit plus rester sur « Détection WebXR… ».
+Elle doit passer à :
+`Quest/WebXR MR détecté ✓`
+ou afficher une erreur explicite si WebXR n'est pas disponible.

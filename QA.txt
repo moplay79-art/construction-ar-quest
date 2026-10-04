@@ -1,10 +1,6 @@
-index: OK
-manifest: OK
-service worker: OK
-icon 192: OK
-icon 512: OK
-manifest linked: OK
-service worker registered: OK
-offline fallback: OK
-persistent anchor retained: OK
-project memory retained: OK
+JavaScript syntax: OK
+checkSupport present: OK
+offline setup present: OK
+new cache version: OK
+literal broken \\n removed: OK
+Syntaxe JavaScript OK
