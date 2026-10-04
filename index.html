@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#101418">
-<title>Construction AR — Quest 3 WebXR v0.2</title>
+<title>Construction AR — Quest 3 WebXR v0.5 Offline</title>
 <style>
 :root { color-scheme: dark; font-family: system-ui, sans-serif; }
 html,body { margin:0; width:100%; height:100%; background:#101418; color:#eef3f7; overflow:hidden; }
@@ -32,13 +32,44 @@ button.danger { background:#fb7185; }
 body.xr #panel { max-width:360px; font-size:14px; }
 body.xr .config { display:none; }
 body.xr #xrHelp { display:block; }
+
+.stagebar {
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  gap:4px;
+  margin:7px 0;
+}
+.stagebar button {
+  padding:9px 4px;
+  min-width:0;
+  font-size:11px;
+}
+.stagebar button.active {
+  outline:3px solid #4ade80;
+  background:#d1fae5;
+}
+
+
+.memory {
+  margin-top:7px;
+  padding:8px;
+  border-radius:9px;
+  background:rgba(74,222,128,.10);
+  border:1px solid rgba(74,222,128,.30);
+  font-size:12px;
+}
 </style>
+
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon-192.png">
+<meta name="application-name" content="Construction AR">
+
 </head>
 <body>
 <canvas id="canvas"></canvas>
 
 <div id="panel">
-  <h1>Construction AR — Pergola v0.2</h1>
+  <h1>Construction AR — Pergola v0.5 Offline</h1>
   <div id="support" class="status">Détection WebXR…</div>
 
   <div class="config">
@@ -69,10 +100,30 @@ body.xr #xrHelp { display:block; }
       <button id="rotL">↶ 1°</button><button id="rotR">↷ 1°</button>
       <button id="lock" class="primary">🔒 Verrouiller ici</button>
     </div>
+    <div class="small" style="margin-top:8px"><b>Afficher :</b></div>
+    <div class="stagebar">
+      <button id="showBases">Bases</button>
+      <button id="showPosts">Poteaux</button>
+      <button id="showBeams">Poutres</button>
+      <button id="showRafters">Chevrons</button>
+      <button id="showAll" class="primary">Tout</button>
+    </div>
     <div>
       <button id="next">Étape suivante</button>
       <button id="reset" class="warn">Replacer</button>
-      <button id="saveAnchor">Sauver la position</button>
+      <button id="saveAnchor">Mémoriser chantier</button>
+    </div>
+  </div>
+
+  
+<div id="offlineState" class="small" style="margin-top:6px;padding:7px;border-radius:8px;background:rgba(103,232,249,.10)">
+  Préparation du mode hors ligne…
+</div>
+
+<div id="memoryBox" class="memory">
+    <b>Mémoire chantier :</b> <span id="memoryStatus">aucun ancrage enregistré</span>
+    <div class="row">
+      <button id="forgetAnchor" class="danger">Oublier l'ancrage</button>
     </div>
   </div>
 
@@ -99,6 +150,8 @@ const resetBtn = document.getElementById('reset');
 const saveAnchorBtn = document.getElementById('saveAnchor');
 const lockBtn = document.getElementById('lock');
 const stepTitle = document.getElementById('stepTitle');
+const memoryStatus = document.getElementById('memoryStatus');
+const forgetAnchorBtn = document.getElementById('forgetAnchor');
 const stepHint = document.getElementById('stepHint');
 const anchorStatus = document.getElementById('anchorStatus');
 
@@ -108,19 +161,78 @@ let lastHit = null, lastViewer = null, persistentAnchor = null;
 let placed = false, locked = false, rootPos = [0,0,0], rootYaw = 0, stage = 0;
 let demoMode = false, rafId = 0;
 
+const STORAGE = {
+  handle: 'construction_ar_anchor_handle_v04',
+  project: 'construction_ar_project_state_v04'
+};
+
 const STEPS = [
   ["Placement", "Vise le sol et appuie sur la gâchette pour placer P1. Le projet s'oriente selon ton regard."],
   ["Implantation", "Repère P1 à P6. Commence par les extrêmes et contrôle les diagonales."],
   ["Poteaux", "Astuce solo : deux tasseaux en diagonale + serre-joints pour maintenir chaque poteau d'aplomb."],
   ["Poutres", "Astuce solo : visse un tasseau-support provisoire sur le poteau pour porter la poutre pendant la fixation."],
   ["Chevrons", "Utilise un gabarit d'entraxe pour répéter la position sans remesurer chaque fois."],
-  ["Contrôle final", "Vérifie stabilité, serrages, aplomb, niveau, protection du bois et sécurité avant retrait des renforts."]
+  ["Pergola complète", "Toute la structure est affichée : bases, poteaux, poutres et chevrons. Tu peux marcher autour après verrouillage."]
 ];
+
+
+function saveProjectState(){
+  const state={
+    version:'0.4',
+    length:parseFloat(document.getElementById('length').value)||4,
+    depth:parseFloat(document.getElementById('depth').value)||2.5,
+    height:parseFloat(document.getElementById('height').value)||2,
+    stage:stage,
+    savedAt:new Date().toISOString()
+  };
+  localStorage.setItem(STORAGE.project,JSON.stringify(state));
+  refreshMemoryStatus();
+}
+function loadProjectState(){
+  try{
+    const raw=localStorage.getItem(STORAGE.project);
+    if(!raw) return null;
+    const s=JSON.parse(raw);
+    if(Number.isFinite(Number(s.length))) document.getElementById('length').value=s.length;
+    if(Number.isFinite(Number(s.depth))) document.getElementById('depth').value=s.depth;
+    if(Number.isFinite(Number(s.height))) document.getElementById('height').value=s.height;
+    if(Number.isFinite(Number(s.stage))) stage=Math.max(1,Math.min(5,Number(s.stage)));
+    return s;
+  }catch(e){ return null; }
+}
+function refreshMemoryStatus(){
+  const h=localStorage.getItem(STORAGE.handle);
+  const s=localStorage.getItem(STORAGE.project);
+  if(h){
+    let suffix='';
+    if(s){
+      try{
+        const p=JSON.parse(s);
+        if(p.savedAt) suffix=' — sauvegardé '+new Date(p.savedAt).toLocaleString();
+      }catch(e){}
+    }
+    memoryStatus.textContent='ancrage persistant présent'+suffix;
+  }else{
+    memoryStatus.textContent='aucun ancrage enregistré';
+  }
+}
 
 function updateStep(){
   const s = STEPS[Math.min(stage, STEPS.length-1)];
   stepTitle.textContent = `Étape ${stage} — ${s[0]}`;
   stepHint.textContent = s[1];
+
+  const map = {
+    1:'showBases',
+    2:'showPosts',
+    3:'showBeams',
+    4:'showRafters',
+    5:'showAll'
+  };
+  for(const id of ['showBases','showPosts','showBeams','showRafters','showAll']){
+    const b=document.getElementById(id);
+    if(b) b.classList.toggle('active', map[stage]===id);
+  }
 }
 
 function dims(){
@@ -291,17 +403,23 @@ async function enterXR(){
       catch(e){ anchorStatus.textContent="Hit-test indisponible : placement en face du casque."; }
     }
 
-    // attempt persistent restore
-    const h=localStorage.getItem('construction_ar_anchor_handle');
+    // Reprise du chantier : recharge d'abord les dimensions/étape, puis l'ancrage.
+    loadProjectState();
+    const h=localStorage.getItem(STORAGE.handle);
     if(h && xrSession.restorePersistentAnchor){
       try{
         persistentAnchor=await xrSession.restorePersistentAnchor(h);
-        placed=true; locked=true; stage=1; updateStep();
-        anchorStatus.textContent="Ancre persistante restaurée — tu peux marcher autour.";
+        placed=true; locked=true;
+        if(stage<1 || stage>5) stage=5;
+        updateStep();
+        anchorStatus.textContent="✓ Chantier restauré : ancrage retrouvé.";
       }catch(e){
-        anchorStatus.textContent="Ancre précédente non restaurée : nouveau placement requis.";
+        anchorStatus.textContent="Ancrage mémorisé introuvable : replace la pergola puis verrouille.";
       }
+    } else if(h) {
+      anchorStatus.textContent="Ancrage mémorisé, mais restauration non disponible dans cette session.";
     }
+    refreshMemoryStatus();
 
     xrSession.addEventListener('select', onSelect);
     xrSession.addEventListener('squeeze', ()=>resetPlacement());
@@ -326,7 +444,7 @@ async function onSelect(){
           const fx=-m[8], fz=-m[10];
           rootYaw=Math.atan2(fx,fz);
         }
-        placed=true; locked=false; stage=1; updateStep();
+        placed=true; locked=false; stage=5; updateStep();
         anchorStatus.textContent="Placement provisoire : règle puis verrouille.";
         return;
       }
@@ -336,7 +454,7 @@ async function onSelect(){
       const fx=-m[8], fz=-m[10];
       rootPos=[m[12]+fx*2,0,m[14]+fz*2];
       rootYaw=Math.atan2(fx,fz);
-      placed=true; locked=false; stage=1; updateStep();
+      placed=true; locked=false; stage=5; updateStep();
       anchorStatus.textContent="Placement provisoire : règle puis verrouille.";
     }
   } else if(locked) {
@@ -350,6 +468,18 @@ function nextStage(){
   if(!locked){ anchorStatus.textContent="Verrouille d'abord la position."; return; }
   stage = stage>=5 ? 1 : stage+1;
   updateStep();
+  saveProjectState();
+}
+function setStageDirect(n){
+  if(!placed){
+    anchorStatus.textContent="Place d'abord la pergola.";
+    return;
+  }
+  stage=Math.max(1,Math.min(5,n));
+  updateStep();
+  saveProjectState();
+  const labels={1:'bases',2:'poteaux',3:'poutres',4:'chevrons',5:'pergola complète'};
+  anchorStatus.textContent = `Affichage : ${labels[stage]}.`;
 }
 function nudge(kind, amount){
   if(!placed || locked) { if(locked) anchorStatus.textContent="Replacer pour modifier une position verrouillée."; return; }
@@ -362,10 +492,27 @@ function rotateDeg(deg){
   if(!placed || locked) { if(locked) anchorStatus.textContent="Replacer pour modifier l'orientation."; return; }
   rootYaw += deg*Math.PI/180;
 }
+
+async function deleteSavedPersistentAnchor(){
+  const oldHandle=localStorage.getItem(STORAGE.handle);
+  if(!oldHandle) return;
+  if(xrSession && xrSession.deletePersistentAnchor){
+    try{ await xrSession.deletePersistentAnchor(oldHandle); }catch(e){}
+  }
+  localStorage.removeItem(STORAGE.handle);
+}
+
 async function lockPlacement(){
   if(!placed){ anchorStatus.textContent="Place d'abord la pergola."; return; }
-  if(persistentAnchor && persistentAnchor.delete){ try{persistentAnchor.delete();}catch(e){} }
+
+  // Si on repositionne un chantier déjà mémorisé, on remplace l'ancien ancrage persistant.
+  await deleteSavedPersistentAnchor();
+
+  if(persistentAnchor && persistentAnchor.delete){
+    try{ persistentAnchor.delete(); }catch(e){}
+  }
   persistentAnchor=null;
+
   if(xrSession && xrSession.createAnchor){
     try{
       const rigid=new XRRigidTransform(
@@ -374,20 +521,38 @@ async function lockPlacement(){
       );
       persistentAnchor=await xrSession.createAnchor(rigid,refSpace);
       locked=true;
-      anchorStatus.textContent="Ancre spatiale créée ✓ Tu peux maintenant marcher autour.";
+
+      if(persistentAnchor.requestPersistentHandle){
+        try{
+          const handle=await persistentAnchor.requestPersistentHandle();
+          localStorage.setItem(STORAGE.handle,handle);
+          saveProjectState();
+          refreshMemoryStatus();
+          anchorStatus.textContent="✓ Verrouillé et mémorisé. Tu peux quitter puis revenir plus tard.";
+        }catch(e){
+          saveProjectState();
+          anchorStatus.textContent="Verrouillé, mais l'ancrage persistant n'a pas pu être mémorisé.";
+        }
+      }else{
+        saveProjectState();
+        anchorStatus.textContent="Position verrouillée pour cette session uniquement.";
+      }
     }catch(e){
       locked=true;
-      anchorStatus.textContent="Position verrouillée dans l'espace local.";
+      saveProjectState();
+      anchorStatus.textContent="Position verrouillée localement, sans ancre persistante.";
     }
   } else {
     locked=true;
-    anchorStatus.textContent="Position verrouillée dans l'espace local.";
+    saveProjectState();
+    anchorStatus.textContent="Position verrouillée localement, sans ancre persistante.";
   }
+  updateStep();
 }
 function resetPlacement(){
   if(persistentAnchor && persistentAnchor.delete){ try{persistentAnchor.delete();}catch(e){} }
   placed=false; locked=false; stage=0; persistentAnchor=null;
-  anchorStatus.textContent="Placement réinitialisé.";
+  anchorStatus.textContent="Placement à refaire. L’ancien ancrage mémorisé sera remplacé au prochain verrouillage.";
   updateStep();
 }
 async function saveAnchor(){
@@ -395,27 +560,39 @@ async function saveAnchor(){
     anchorStatus.textContent="Place d'abord la pergola.";
     return;
   }
-  if(!persistentAnchor){ await lockPlacement(); }
-  if(!persistentAnchor && xrSession.createAnchor){
-    try{
-      const rigid=new XRRigidTransform(
-        {x:rootPos[0],y:rootPos[1],z:rootPos[2]},
-        {x:0,y:Math.sin(rootYaw/2),z:0,w:Math.cos(rootYaw/2)}
-      );
-      persistentAnchor=await xrSession.createAnchor(rigid,refSpace);
-    }catch(e){}
+  if(!locked || !persistentAnchor){
+    await lockPlacement();
+    return;
   }
-  if(persistentAnchor && persistentAnchor.requestPersistentHandle){
+  if(persistentAnchor.requestPersistentHandle){
     try{
       const handle=await persistentAnchor.requestPersistentHandle();
-      localStorage.setItem('construction_ar_anchor_handle',handle);
-      anchorStatus.textContent="Ancre persistante sauvegardée ✓";
+      localStorage.setItem(STORAGE.handle,handle);
+      saveProjectState();
+      refreshMemoryStatus();
+      anchorStatus.textContent="✓ Chantier mémorisé.";
     }catch(e){
-      anchorStatus.textContent="Sauvegarde d'ancre refusée/non disponible : "+e.message;
+      anchorStatus.textContent="Sauvegarde persistante indisponible : "+e.message;
     }
-  }else{
-    anchorStatus.textContent="Ancres persistantes non exposées par cette session.";
   }
+}
+
+
+async function forgetSavedAnchor(){
+  const handle=localStorage.getItem(STORAGE.handle);
+  if(handle && xrSession && xrSession.deletePersistentAnchor){
+    try{ await xrSession.deletePersistentAnchor(handle); }catch(e){}
+  }
+  localStorage.removeItem(STORAGE.handle);
+  localStorage.removeItem(STORAGE.project);
+  if(persistentAnchor && persistentAnchor.delete){
+    try{ persistentAnchor.delete(); }catch(e){}
+  }
+  persistentAnchor=null;
+  placed=false; locked=false; stage=0;
+  anchorStatus.textContent="Ancrage oublié. Tu peux créer un nouveau chantier.";
+  refreshMemoryStatus();
+  updateStep();
 }
 
 function onXRFrame(t,frame){
@@ -503,7 +680,13 @@ demoBtn.addEventListener('click',demo);
 nextBtn.addEventListener('click',nextStage);
 resetBtn.addEventListener('click',resetPlacement);
 saveAnchorBtn.addEventListener('click',saveAnchor);
+forgetAnchorBtn.addEventListener('click',forgetSavedAnchor);
 lockBtn.addEventListener('click',lockPlacement);
+document.getElementById('showBases').addEventListener('click',()=>setStageDirect(1));
+document.getElementById('showPosts').addEventListener('click',()=>setStageDirect(2));
+document.getElementById('showBeams').addEventListener('click',()=>setStageDirect(3));
+document.getElementById('showRafters').addEventListener('click',()=>setStageDirect(4));
+document.getElementById('showAll').addEventListener('click',()=>setStageDirect(5));
 document.getElementById('left').addEventListener('click',()=>nudge('right',-parseFloat(document.getElementById('nudge').value)));
 document.getElementById('right').addEventListener('click',()=>nudge('right',parseFloat(document.getElementById('nudge').value)));
 document.getElementById('forward').addEventListener('click',()=>nudge('forward',parseFloat(document.getElementById('nudge').value)));
@@ -513,8 +696,12 @@ document.getElementById('down').addEventListener('click',()=>nudge('up',-parseFl
 document.getElementById('rotL').addEventListener('click',()=>rotateDeg(-1));
 document.getElementById('rotR').addEventListener('click',()=>rotateDeg(1));
 window.addEventListener('resize',resize);
+\nasync function setupOfflineMode(){\n  const box=document.getElementById('offlineState');\n  if(!('serviceWorker' in navigator)){\n    box.textContent='Mode hors ligne non disponible dans ce navigateur.';\n    return;\n  }\n  try{\n    await navigator.serviceWorker.register('./sw.js',{scope:'./'});\n    await navigator.serviceWorker.ready;\n    box.textContent = navigator.onLine\n      ? '✓ Mode hors ligne préparé. Après ce chargement, coupe le Wi‑Fi pour tester.'\n      : '✓ Hors ligne — application chargée depuis le stockage local.';\n    window.addEventListener('online',()=>box.textContent='✓ En ligne — cache hors ligne actif.');\n    window.addEventListener('offline',()=>box.textContent='✓ Hors ligne — cache local actif.');\n  }catch(e){\n    box.textContent='Cache hors ligne non installé : '+e.message;\n  }\n}\n
+loadProjectState();
 updateStep();
+refreshMemoryStatus();
 checkSupport();
+setupOfflineMode();
 })();
 </script>
 </body>

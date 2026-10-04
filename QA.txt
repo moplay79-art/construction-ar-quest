@@ -1,0 +1,10 @@
+index: OK
+manifest: OK
+service worker: OK
+icon 192: OK
+icon 512: OK
+manifest linked: OK
+service worker registered: OK
+offline fallback: OK
+persistent anchor retained: OK
+project memory retained: OK
