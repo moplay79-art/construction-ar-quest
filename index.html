@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#101418">
+<title>Construction AR — Quest 3 WebXR v0.1</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui, sans-serif; }
+html,body { margin:0; width:100%; height:100%; background:#101418; color:#eef3f7; overflow:hidden; }
+#canvas { width:100%; height:100%; display:block; touch-action:none; }
+#panel {
+  position:fixed; left:12px; top:12px; width:min(430px,calc(100vw - 24px));
+  background:rgba(10,14,18,.86); backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,.16); border-radius:16px; padding:14px; z-index:5;
+}
+h1 { font-size:20px; margin:0 0 8px; }
+.small { font-size:13px; opacity:.82; line-height:1.35; }
+.status { font-weight:700; margin:8px 0; }
+.grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin:10px 0; }
+label { font-size:12px; opacity:.8; }
+input { width:100%; box-sizing:border-box; padding:9px; margin-top:3px; border-radius:9px; border:1px solid #4b5563; background:#111827; color:white; }
+button {
+  border:0; border-radius:10px; padding:11px 13px; font-weight:700; cursor:pointer;
+  background:#e5e7eb; color:#111827; margin:3px 3px 3px 0;
+}
+button.primary { background:#4ade80; }
+button.warn { background:#fbbf24; }
+button.danger { background:#fb7185; }
+#step { margin-top:8px; padding:10px; border-radius:10px; background:rgba(255,255,255,.08); }
+#xrHelp { display:none; margin-top:8px; }
+body.xr #panel { max-width:360px; font-size:14px; }
+body.xr .config { display:none; }
+body.xr #xrHelp { display:block; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<div id="panel">
+  <h1>Construction AR — Pergola</h1>
+  <div id="support" class="status">Détection WebXR…</div>
+
+  <div class="config">
+    <div class="grid">
+      <div><label>Longueur (m)<input id="length" type="number" step="0.1" min="1" value="4"></label></div>
+      <div><label>Profondeur (m)<input id="depth" type="number" step="0.1" min="0.8" value="2.5"></label></div>
+      <div><label>Hauteur (m)<input id="height" type="number" step="0.1" min="1.2" value="2"></label></div>
+    </div>
+    <button id="enter" class="primary">Entrer en réalité mixte</button>
+    <button id="demo">Démo écran</button>
+    <div class="small">
+      Quest 3 : entre en MR puis vise le sol et appuie sur la gâchette pour poser P1.
+      Ensuite, chaque pression passe à l’étape suivante.
+    </div>
+  </div>
+
+  <div id="xrHelp">
+    <button id="next" class="primary">Étape suivante</button>
+    <button id="reset" class="warn">Replacer</button>
+    <button id="saveAnchor">Sauver l’ancre</button>
+  </div>
+
+  <div id="step">
+    <b id="stepTitle">Étape 0 — Placement</b>
+    <div id="stepHint" class="small">Place la pergola au sol.</div>
+  </div>
+  <div id="anchorStatus" class="small"></div>
+  <div class="small" style="margin-top:8px">
+    Prototype d’aide : il ne remplace pas les contrôles structurels, les règles locales, ni les vérifications de sécurité du chantier.
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+const canvas = document.getElementById('canvas');
+const support = document.getElementById('support');
+const enterBtn = document.getElementById('enter');
+const demoBtn = document.getElementById('demo');
+const nextBtn = document.getElementById('next');
+const resetBtn = document.getElementById('reset');
+const saveAnchorBtn = document.getElementById('saveAnchor');
+const stepTitle = document.getElementById('stepTitle');
+const stepHint = document.getElementById('stepHint');
+const anchorStatus = document.getElementById('anchorStatus');
+
+let gl = null, program = null, cube = null;
+let xrSession = null, refSpace = null, viewerSpace = null, hitTestSource = null;
+let lastHit = null, lastViewer = null, persistentAnchor = null;
+let placed = false, rootPos = [0,0,0], rootYaw = 0, stage = 0;
+let demoMode = false, rafId = 0;
+
+const STEPS = [
+  ["Placement", "Vise le sol et appuie sur la gâchette pour placer P1. Le projet s'oriente selon ton regard."],
+  ["Implantation", "Repère P1 à P6. Commence par les extrêmes et contrôle les diagonales."],
+  ["Poteaux", "Astuce solo : deux tasseaux en diagonale + serre-joints pour maintenir chaque poteau d'aplomb."],
+  ["Poutres", "Astuce solo : visse un tasseau-support provisoire sur le poteau pour porter la poutre pendant la fixation."],
+  ["Chevrons", "Utilise un gabarit d'entraxe pour répéter la position sans remesurer chaque fois."],
+  ["Contrôle final", "Vérifie stabilité, serrages, aplomb, niveau, protection du bois et sécurité avant retrait des renforts."]
+];
+
+function updateStep(){
+  const s = STEPS[Math.min(stage, STEPS.length-1)];
+  stepTitle.textContent = `Étape ${stage} — ${s[0]}`;
+  stepHint.textContent = s[1];
+}
+
+function dims(){
+  return {
+    L: Math.max(1, parseFloat(document.getElementById('length').value)||4),
+    D: Math.max(.8, parseFloat(document.getElementById('depth').value)||2.5),
+    H: Math.max(1.2, parseFloat(document.getElementById('height').value)||2)
+  };
+}
+
+function initGL(){
+  if(gl) return true;
+  gl = canvas.getContext('webgl', {alpha:true, antialias:true, xrCompatible:true});
+  if(!gl) { support.textContent = "WebGL indisponible."; return false; }
+
+  const vs = `
+    attribute vec3 aPos;
+    uniform mat4 uMVP;
+    void main(){ gl_Position = uMVP * vec4(aPos,1.0); }
+  `;
+  const fs = `
+    precision mediump float;
+    uniform vec4 uColor;
+    void main(){ gl_FragColor = uColor; }
+  `;
+  const compile = (type,src)=>{
+    const sh=gl.createShader(type); gl.shaderSource(sh,src); gl.compileShader(sh);
+    if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  };
+  program=gl.createProgram();
+  gl.attachShader(program,compile(gl.VERTEX_SHADER,vs));
+  gl.attachShader(program,compile(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+
+  const verts = new Float32Array([
+    // front
+    -.5,-.5,.5, .5,-.5,.5, .5,.5,.5,  -.5,-.5,.5, .5,.5,.5, -.5,.5,.5,
+    // back
+    .5,-.5,-.5, -.5,-.5,-.5, -.5,.5,-.5,  .5,-.5,-.5, -.5,.5,-.5, .5,.5,-.5,
+    // left
+    -.5,-.5,-.5, -.5,-.5,.5, -.5,.5,.5,  -.5,-.5,-.5, -.5,.5,.5, -.5,.5,-.5,
+    // right
+    .5,-.5,.5, .5,-.5,-.5, .5,.5,-.5,  .5,-.5,.5, .5,.5,-.5, .5,.5,.5,
+    // top
+    -.5,.5,.5, .5,.5,.5, .5,.5,-.5,  -.5,.5,.5, .5,.5,-.5, -.5,.5,-.5,
+    // bottom
+    -.5,-.5,-.5, .5,-.5,-.5, .5,-.5,.5,  -.5,-.5,-.5, .5,-.5,.5, -.5,-.5,.5
+  ]);
+  cube = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,cube);
+  gl.bufferData(gl.ARRAY_BUFFER,verts,gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(program,'aPos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
+
+  gl.enable(gl.DEPTH_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.clearColor(0,0,0,0);
+  return true;
+}
+
+// minimal matrices, column-major
+function mul(a,b){
+  const o=new Float32Array(16);
+  for(let c=0;c<4;c++) for(let r=0;r<4;r++){
+    o[c*4+r]=a[0*4+r]*b[c*4+0]+a[1*4+r]*b[c*4+1]+a[2*4+r]*b[c*4+2]+a[3*4+r]*b[c*4+3];
+  }
+  return o;
+}
+function trs(pos,yaw,scale){
+  const c=Math.cos(yaw), s=Math.sin(yaw);
+  return new Float32Array([
+    c*scale[0],0,-s*scale[0],0,
+    0,scale[1],0,0,
+    s*scale[2],0,c*scale[2],0,
+    pos[0],pos[1],pos[2],1
+  ]);
+}
+function transformLocal(p){
+  const c=Math.cos(rootYaw), s=Math.sin(rootYaw);
+  return [
+    rootPos[0] + c*p[0] + s*p[2],
+    rootPos[1] + p[1],
+    rootPos[2] - s*p[0] + c*p[2]
+  ];
+}
+function drawBox(viewProj, localPos, scale, color, yawAdd=0){
+  const p=transformLocal(localPos);
+  const model=trs(p,rootYaw+yawAdd,scale);
+  const mvp=mul(viewProj,model);
+  gl.uniformMatrix4fv(gl.getUniformLocation(program,'uMVP'),false,mvp);
+  gl.uniform4fv(gl.getUniformLocation(program,'uColor'),color);
+  gl.drawArrays(gl.TRIANGLES,0,36);
+}
+function drawWorldBox(viewProj, worldPos, scale, color, yaw=0){
+  const model=trs(worldPos,yaw,scale);
+  gl.uniformMatrix4fv(gl.getUniformLocation(program,'uMVP'),false,mul(viewProj,model));
+  gl.uniform4fv(gl.getUniformLocation(program,'uColor'),color);
+  gl.drawArrays(gl.TRIANGLES,0,36);
+}
+
+function renderPergola(viewProj){
+  const {L,D,H}=dims();
+  const cyan=[.05,.85,1,.34], yellow=[1,.78,.05,.72], green=[.25,1,.45,.8];
+  const post=0.07, bw=0.07, bh=0.045, rw=0.045, rh=0.045;
+  const xs=[0,L/2,L];
+
+  // implantation markers
+  for(const z of [0,D]) for(const x of xs)
+    drawBox(viewProj,[x,.015,z],[.10,.03,.10],stage===1?yellow:green);
+
+  if(stage>=2){
+    for(const z of [0,D]) for(const x of xs)
+      drawBox(viewProj,[x,H/2,z],[post,H,post],cyan);
+  }
+  if(stage>=3){
+    drawBox(viewProj,[L/2,H+bh/2,0],[L,bh,bw],cyan);
+    drawBox(viewProj,[L/2,H+bh/2,D],[L,bh,bw],cyan);
+  }
+  if(stage>=4){
+    const n=9;
+    for(let i=0;i<n;i++){
+      const x=L*i/(n-1);
+      drawBox(viewProj,[x,H+bh+rh/2,D/2],[rw,rh,D],cyan);
+    }
+  }
+}
+
+async function checkSupport(){
+  if(!navigator.xr){
+    support.textContent="WebXR non disponible dans ce navigateur.";
+    enterBtn.disabled=true;
+    return;
+  }
+  try{
+    const ok=await navigator.xr.isSessionSupported('immersive-ar');
+    support.textContent=ok ? "Quest/WebXR MR détecté ✓" : "Mode immersive-ar non disponible.";
+    enterBtn.disabled=!ok;
+  }catch(e){
+    support.textContent="Impossible de tester WebXR : "+e.message;
+  }
+}
+
+async function enterXR(){
+  if(!initGL()) return;
+  try{
+    if(gl.makeXRCompatible) await gl.makeXRCompatible();
+    const opts={
+      requiredFeatures:['local-floor'],
+      optionalFeatures:['hit-test','anchors','dom-overlay'],
+      domOverlay:{root:document.getElementById('panel')}
+    };
+    xrSession=await navigator.xr.requestSession('immersive-ar',opts);
+    document.body.classList.add('xr');
+    xrSession.updateRenderState({baseLayer:new XRWebGLLayer(xrSession,gl,{alpha:true, framebufferScaleFactor:1.2})});
+    refSpace=await xrSession.requestReferenceSpace('local-floor');
+    viewerSpace=await xrSession.requestReferenceSpace('viewer');
+
+    if(xrSession.requestHitTestSource){
+      try{ hitTestSource=await xrSession.requestHitTestSource({space:viewerSpace}); }
+      catch(e){ anchorStatus.textContent="Hit-test indisponible : placement en face du casque."; }
+    }
+
+    // attempt persistent restore
+    const h=localStorage.getItem('construction_ar_anchor_handle');
+    if(h && xrSession.restorePersistentAnchor){
+      try{
+        persistentAnchor=await xrSession.restorePersistentAnchor(h);
+        placed=true; stage=1; updateStep();
+        anchorStatus.textContent="Ancre persistante restaurée.";
+      }catch(e){
+        anchorStatus.textContent="Ancre précédente non restaurée : nouveau placement requis.";
+      }
+    }
+
+    xrSession.addEventListener('select', onSelect);
+    xrSession.addEventListener('squeeze', ()=>resetPlacement());
+    xrSession.addEventListener('end', ()=>{
+      document.body.classList.remove('xr');
+      xrSession=null; hitTestSource=null; lastHit=null; persistentAnchor=null;
+    });
+    xrSession.requestAnimationFrame(onXRFrame);
+  }catch(e){
+    support.textContent="Erreur démarrage MR : "+e.message;
+  }
+}
+
+async function onSelect(){
+  if(!placed){
+    if(lastHit){
+      const pose=lastHit.getPose(refSpace);
+      if(pose){
+        rootPos=[pose.transform.position.x,pose.transform.position.y,pose.transform.position.z];
+        if(lastViewer){
+          const m=lastViewer.transform.matrix;
+          const rightX=m[0], rightZ=m[2];
+          rootYaw=Math.atan2(-rightZ,rightX);
+        }
+        placed=true; stage=1; updateStep();
+        if(lastHit.createAnchor){
+          try{ persistentAnchor=await lastHit.createAnchor(); }catch(e){}
+        }
+        return;
+      }
+    }
+    // fallback: 2m ahead, floor Y=0 in local-floor
+    if(lastViewer){
+      const m=lastViewer.transform.matrix;
+      const fx=-m[8], fz=-m[10];
+      rootPos=[m[12]+fx*2,0,m[14]+fz*2];
+      const rightX=m[0], rightZ=m[2];
+      rootYaw=Math.atan2(-rightZ,rightX);
+      placed=true; stage=1; updateStep();
+    }
+  } else {
+    nextStage();
+  }
+}
+
+function nextStage(){
+  stage = stage>=5 ? 1 : stage+1;
+  updateStep();
+}
+function resetPlacement(){
+  placed=false; stage=0; persistentAnchor=null;
+  anchorStatus.textContent="Placement réinitialisé.";
+  updateStep();
+}
+async function saveAnchor(){
+  if(!xrSession || !placed){
+    anchorStatus.textContent="Place d'abord la pergola.";
+    return;
+  }
+  if(!persistentAnchor && xrSession.createAnchor){
+    try{
+      const rigid=new XRRigidTransform(
+        {x:rootPos[0],y:rootPos[1],z:rootPos[2]},
+        {x:0,y:Math.sin(rootYaw/2),z:0,w:Math.cos(rootYaw/2)}
+      );
+      persistentAnchor=await xrSession.createAnchor(rigid,refSpace);
+    }catch(e){}
+  }
+  if(persistentAnchor && persistentAnchor.requestPersistentHandle){
+    try{
+      const handle=await persistentAnchor.requestPersistentHandle();
+      localStorage.setItem('construction_ar_anchor_handle',handle);
+      anchorStatus.textContent="Ancre persistante sauvegardée ✓";
+    }catch(e){
+      anchorStatus.textContent="Sauvegarde d'ancre refusée/non disponible : "+e.message;
+    }
+  }else{
+    anchorStatus.textContent="Ancres persistantes non exposées par cette session.";
+  }
+}
+
+function onXRFrame(t,frame){
+  const session=frame.session;
+  const pose=frame.getViewerPose(refSpace);
+  if(!pose){ session.requestAnimationFrame(onXRFrame); return; }
+
+  lastViewer=pose.views[0];
+
+  if(persistentAnchor && persistentAnchor.anchorSpace){
+    const ap=frame.getPose(persistentAnchor.anchorSpace,refSpace);
+    if(ap){
+      rootPos=[ap.transform.position.x,ap.transform.position.y,ap.transform.position.z];
+      const q=ap.transform.orientation;
+      rootYaw=Math.atan2(2*(q.w*q.y+q.x*q.z),1-2*(q.y*q.y+q.z*q.z));
+    }
+  }
+
+  if(hitTestSource && !placed){
+    const hits=frame.getHitTestResults(hitTestSource);
+    lastHit=hits.length ? hits[0] : null;
+  }
+
+  const layer=session.renderState.baseLayer;
+  gl.bindFramebuffer(gl.FRAMEBUFFER,layer.framebuffer);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  for(const view of pose.views){
+    const vp=layer.getViewport(view);
+    gl.viewport(vp.x,vp.y,vp.width,vp.height);
+    const viewProj=mul(view.projectionMatrix,view.transform.inverse.matrix);
+
+    if(!placed && lastHit){
+      const hp=lastHit.getPose(refSpace);
+      if(hp){
+        drawWorldBox(viewProj,
+          [hp.transform.position.x,hp.transform.position.y+.006,hp.transform.position.z],
+          [.18,.012,.18],[.2,1,.4,.85],0);
+      }
+    }
+    if(placed) renderPergola(viewProj);
+  }
+  session.requestAnimationFrame(onXRFrame);
+}
+
+function demo(){
+  if(!initGL()) return;
+  demoMode=!demoMode;
+  demoBtn.textContent=demoMode?"Arrêter démo":"Démo écran";
+  placed=true; stage=4; rootPos=[-2,0,-6]; rootYaw=0;
+  resize();
+  if(demoMode) requestAnimationFrame(demoFrame);
+}
+function perspective(fovy,aspect,near,far){
+  const f=1/Math.tan(fovy/2), nf=1/(near-far);
+  return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0]);
+}
+function lookView(){
+  // camera at (0,1.6,0), facing -Z -> view translation
+  return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,-1.6,0,1]);
+}
+function demoFrame(){
+  if(!demoMode) return;
+  resize();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,canvas.width,canvas.height);
+  gl.clearColor(.04,.06,.08,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  const p=perspective(Math.PI/3,canvas.width/canvas.height,.05,100);
+  renderPergola(mul(p,lookView()));
+  gl.clearColor(0,0,0,0);
+  requestAnimationFrame(demoFrame);
+}
+function resize(){
+  const dpr=Math.min(devicePixelRatio||1,2);
+  const w=Math.floor(innerWidth*dpr), h=Math.floor(innerHeight*dpr);
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+}
+
+enterBtn.addEventListener('click',enterXR);
+demoBtn.addEventListener('click',demo);
+nextBtn.addEventListener('click',nextStage);
+resetBtn.addEventListener('click',resetPlacement);
+saveAnchorBtn.addEventListener('click',saveAnchor);
+window.addEventListener('resize',resize);
+updateStep();
+checkSupport();
+})();
+</script>
+</body>
+</html>
