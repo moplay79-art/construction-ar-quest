@@ -1,12 +1,6 @@
-JavaScript: OK
-stage starts at bases: OK
-second trigger locks: OK
-no stage cycling: OK
-controller polling: OK
-left joystick movement: OK
-right joystick rotate/height: OK
-grip fine mode: OK
-screen controls disabled in XR: OK
-offline cache v0.6: OK
-persistent anchor retained: OK
-Syntaxe JavaScript OK
+JavaScript syntax: OK
+Left trigger previous: OK
+Right grip grab: OK
+6 stages: OK
+Offline cache v0.7: OK
+Persistent anchor retained: OK

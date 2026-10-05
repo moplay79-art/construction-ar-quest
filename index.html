@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#101418">
-<title>Construction AR — Quest 3 WebXR v0.6 Controller</title>
+<title>Construction AR — Quest 3 WebXR v0.7 Grab + Steps</title>
 <style>
 :root { color-scheme: dark; font-family: system-ui, sans-serif; }
 html,body { margin:0; width:100%; height:100%; background:#101418; color:#eef3f7; overflow:hidden; }
@@ -92,7 +92,7 @@ body.xr #panel select {
 <canvas id="canvas"></canvas>
 
 <div id="panel">
-  <h1>Construction AR — Pergola v0.6 Controller</h1>
+  <h1>Construction AR — Pergola v0.7 Grab + Steps</h1>
   <div id="support" class="status">Détection WebXR…</div>
 
   <div class="config">
@@ -111,11 +111,12 @@ body.xr #panel select {
 
   <div id="controllerHelp" class="small">
     <b>Contrôleurs Quest</b><br>
-    • Gâchette : poser → verrouiller → étape suivante<br>
-    • Joystick gauche : déplacer la pergola<br>
-    • Joystick droit ←/→ : rotation<br>
-    • Joystick droit ↑/↓ : hauteur<br>
-    • Maintenir Grip : réglage fin
+    • Gâchette droite : poser / verrouiller / étape suivante<br>
+    • Gâchette gauche : étape précédente<br>
+    • Grip droit maintenu : attraper et déplacer toute la pergola<br>
+    • Joystick gauche : déplacement fin au sol<br>
+    • Joystick droit ←/→ : rotation fine<br>
+    • Joystick droit ↑/↓ : hauteur fine
   </div>
 
   <div id="xrHelp">
@@ -199,18 +200,18 @@ const STORAGE = {
 };
 
 const STEPS = [
-  ["Placement", "Vise le sol et appuie sur la gâchette pour placer P1. Le projet s'oriente selon ton regard."],
-  ["Implantation", "Repère P1 à P6. Commence par les extrêmes et contrôle les diagonales."],
-  ["Poteaux", "Astuce solo : deux tasseaux en diagonale + serre-joints pour maintenir chaque poteau d'aplomb."],
-  ["Poutres", "Astuce solo : visse un tasseau-support provisoire sur le poteau pour porter la poutre pendant la fixation."],
-  ["Chevrons", "Utilise un gabarit d'entraxe pour répéter la position sans remesurer chaque fois."],
-  ["Pergola complète", "Structure complète affichée. L’ancrage reste fixe pendant que tu marches autour."]
+  ["Bases", "Implantation au sol : vérifie l'emplacement avant de continuer."],
+  ["Poteaux", "Les poteaux apparaissent. Contrôle l'aplomb et l'alignement."],
+  ["Poutres", "Ajout des poutres longitudinales principales."],
+  ["Lambourdes", "Ajout des éléments transversaux porteurs."],
+  ["Tasseaux", "Ajout des tasseaux supérieurs pour le palissage / la végétation."],
+  ["Pergola complète", "Structure complète affichée. Tu peux marcher autour et la réajuster avec le Grip droit."]
 ];
 
 
 function saveProjectState(){
   const state={
-    version:'0.6',
+    version:'0.7',
     length:parseFloat(document.getElementById('length').value)||4,
     depth:parseFloat(document.getElementById('depth').value)||2.5,
     height:parseFloat(document.getElementById('height').value)||2,
@@ -372,28 +373,20 @@ function drawWorldBox(viewProj, worldPos, scale, color, yaw=0){
 
 function renderPergola(viewProj){
   const {L,D,H}=dims();
-  const cyan=[.05,.85,1,.34], yellow=[1,.78,.05,.72], green=[.25,1,.45,.8];
-  const post=0.07, bw=0.07, bh=0.045, rw=0.045, rh=0.045;
+  const cyan=[.05,.85,1,.38], yellow=[1,.78,.05,.78], green=[.25,1,.45,.82];
+  const post=0.07, bw=0.07, bh=0.045, joistW=0.045, joistH=0.07, battenW=0.035, battenH=0.035;
   const xs=[0,L/2,L];
-
-  // implantation markers
-  for(const z of [0,D]) for(const x of xs)
-    drawBox(viewProj,[x,.015,z],[.10,.03,.10],stage===1?yellow:green);
-
-  if(stage>=2){
-    for(const z of [0,D]) for(const x of xs)
-      drawBox(viewProj,[x,H/2,z],[post,H,post],cyan);
-  }
+  for(const z of [0,D]) for(const x of xs) drawBox(viewProj,[x,.015,z],[.12,.03,.12],stage===1?yellow:green);
+  if(stage>=2){ for(const z of [0,D]) for(const x of xs) drawBox(viewProj,[x,H/2,z],[post,H,post],cyan); }
   if(stage>=3){
     drawBox(viewProj,[L/2,H+bh/2,0],[L,bh,bw],cyan);
     drawBox(viewProj,[L/2,H+bh/2,D],[L,bh,bw],cyan);
   }
   if(stage>=4){
-    const n=9;
-    for(let i=0;i<n;i++){
-      const x=L*i/(n-1);
-      drawBox(viewProj,[x,H+bh+rh/2,D/2],[rw,rh,D],cyan);
-    }
+    const n=7; for(let i=0;i<n;i++){ const x=L*i/(n-1); drawBox(viewProj,[x,H+bh+joistH/2,D/2],[joistW,joistH,D],cyan); }
+  }
+  if(stage>=5){
+    const n=5; for(let i=0;i<n;i++){ const z=D*i/(n-1); drawBox(viewProj,[L/2,H+bh+joistH+battenH/2,z],[L,battenH,battenW],cyan); }
   }
 }
 
@@ -442,7 +435,7 @@ async function enterXR(){
       try{
         persistentAnchor=await xrSession.restorePersistentAnchor(h);
         placed=true; locked=true;
-        if(stage<1 || stage>5) stage=1;
+        if(stage<1 || stage>6) stage=1;
         updateStep();
         anchorStatus.textContent="✓ Chantier restauré : ancrage retrouvé.";
       }catch(e){
@@ -464,89 +457,61 @@ async function enterXR(){
   }
 }
 
-async function onSelect(){
-  // 1er clic : poser P1 / afficher uniquement les bases.
+async function onSelect(event){
+  const hand=event?.inputSource?.handedness || "none";
+  if(hand==="left" && placed){ prevStage(); return; }
   if(!placed){
     if(lastHit){
       const pose=lastHit.getPose(refSpace);
       if(pose){
         rootPos=[pose.transform.position.x,pose.transform.position.y,pose.transform.position.z];
-        if(lastViewer){
-          const m=lastViewer.transform.matrix;
-          const fx=-m[8], fz=-m[10];
-          rootYaw=Math.atan2(fx,fz);
-        }
-        placed=true;
-        locked=false;
-        stage=1;
-        updateStep();
-        anchorStatus.textContent="Bases posées. Règle avec les joysticks puis appuie à nouveau sur la gâchette.";
+        if(lastViewer){ const m=lastViewer.transform.matrix; const fx=-m[8],fz=-m[10]; rootYaw=Math.atan2(fx,fz); }
+        placed=true; locked=false; stage=1; updateStep();
+        anchorStatus.textContent="Bases posées. Joystick ou Grip droit pour déplacer, puis gâchette droite pour verrouiller.";
         return;
       }
     }
-    if(lastViewer){
-      const m=lastViewer.transform.matrix;
-      const fx=-m[8], fz=-m[10];
-      rootPos=[m[12]+fx*2,0,m[14]+fz*2];
-      rootYaw=Math.atan2(fx,fz);
-      placed=true;
-      locked=false;
-      stage=1;
-      updateStep();
-      anchorStatus.textContent="Bases posées. Règle avec les joysticks puis appuie à nouveau sur la gâchette.";
-    }
+    if(lastViewer){ const m=lastViewer.transform.matrix; const fx=-m[8],fz=-m[10]; rootPos=[m[12]+fx*2,0,m[14]+fz*2]; rootYaw=Math.atan2(fx,fz); placed=true; locked=false; stage=1; updateStep(); }
     return;
   }
-
-  // 2e clic : verrouillage + mémorisation, sans changer d'étape.
-  if(!locked){
-    await lockPlacement();
-    stage=1;
-    updateStep();
-    saveProjectState();
-    anchorStatus.textContent="✓ Bases verrouillées. Gâchette = afficher les poteaux.";
-    return;
-  }
-
-  // Clics suivants : une seule étape à la fois.
+  if(!locked){ await lockPlacement(); stage=1; updateStep(); saveProjectState(); anchorStatus.textContent="✓ Bases verrouillées. Gâchette droite = poteaux. Gauche = retour."; return; }
   nextStage();
 }
 
 function nextStage(){
   if(!locked){ anchorStatus.textContent="Verrouille d'abord la position."; return; }
-  if(stage < 5) stage += 1;
-  updateStep();
-  saveProjectState();
-
-  const messages={
-    1:"Bases",
-    2:"Poteaux",
-    3:"Poutres",
-    4:"Chevrons / tasseaux",
-    5:"Pergola complète"
-  };
-  anchorStatus.textContent = `Étape affichée : ${messages[stage]}.`;
+  if(stage<6) stage+=1;
+  updateStep(); saveProjectState();
+  const messages={1:"Bases",2:"Poteaux",3:"Poutres",4:"Lambourdes",5:"Tasseaux",6:"Pergola complète"};
+  anchorStatus.textContent=`Étape affichée : ${messages[stage]}. Gâchette gauche = revenir.`;
+}
+function prevStage(){
+  if(!placed) return;
+  if(stage>1) stage-=1;
+  updateStep(); saveProjectState();
+  const labels={1:"Bases",2:"Poteaux",3:"Poutres",4:"Lambourdes",5:"Tasseaux",6:"Pergola complète"};
+  anchorStatus.textContent=`Étape précédente : ${labels[stage]}.`;
 }
 function setStageDirect(n){
   if(!placed){
     anchorStatus.textContent="Place d'abord la pergola.";
     return;
   }
-  stage=Math.max(1,Math.min(5,n));
+  stage=Math.max(1,Math.min(6,n));
   updateStep();
   saveProjectState();
   const labels={1:'bases',2:'poteaux',3:'poutres',4:'chevrons',5:'pergola complète'};
   anchorStatus.textContent = `Affichage : ${labels[stage]}.`;
 }
 function nudge(kind, amount){
-  if(!placed || locked) { if(locked) anchorStatus.textContent="Replacer pour modifier une position verrouillée."; return; }
+  if(!placed || locked || grabState) { if(locked) anchorStatus.textContent="Replacer pour modifier une position verrouillée."; return; }
   const c=Math.cos(rootYaw), q=Math.sin(rootYaw);
   if(kind==="right"){ rootPos[0]+=c*amount; rootPos[2]+=-q*amount; }
   if(kind==="forward"){ rootPos[0]+=q*amount; rootPos[2]+=c*amount; }
   if(kind==="up") rootPos[1]+=amount;
 }
 function rotateDeg(deg){
-  if(!placed || locked) { if(locked) anchorStatus.textContent="Replacer pour modifier l'orientation."; return; }
+  if(!placed || locked || grabState) { if(locked) anchorStatus.textContent="Replacer pour modifier l'orientation."; return; }
   rootYaw += deg*Math.PI/180;
 }
 
@@ -608,7 +573,7 @@ async function lockPlacement(){
 }
 function resetPlacement(){
   if(persistentAnchor && persistentAnchor.delete){ try{persistentAnchor.delete();}catch(e){} }
-  placed=false; locked=false; stage=0; persistentAnchor=null; lastFrameMs=0;
+  placed=false; locked=false; stage=0; persistentAnchor=null; lastFrameMs=0; grabState=null; pendingGrabSource=null;
   anchorStatus.textContent="Placement à refaire. L’ancien ancrage mémorisé sera remplacé au prochain verrouillage.";
   updateStep();
 }
@@ -654,6 +619,9 @@ async function forgetSavedAnchor(){
 
 
 let lastFrameMs = 0;
+let grabState = null;
+let grabWasLocked = false;
+let pendingGrabSource = null;
 let controllerHudMs = 0;
 
 function deadzone(v, dz=0.16){
@@ -669,8 +637,35 @@ function thumbAxes(gamepad){
   return [deadzone(gamepad.axes[n-2]||0), deadzone(gamepad.axes[n-1]||0)];
 }
 
+function quatYaw(q){
+  return Math.atan2(2*(q.w*q.y + q.x*q.z),1-2*(q.y*q.y + q.z*q.z));
+}
+async function beginGrab(inputSource, frame){
+  if(!placed || inputSource.handedness!=="right" || !inputSource.gripSpace) return;
+  const pose=frame.getPose(inputSource.gripSpace,refSpace); if(!pose) return;
+  grabWasLocked=locked;
+  if(locked){ locked=false; if(persistentAnchor && persistentAnchor.delete){ try{persistentAnchor.delete();}catch(e){} } persistentAnchor=null; }
+  grabState={source:inputSource,startControllerPos:[pose.transform.position.x,pose.transform.position.y,pose.transform.position.z],startControllerYaw:quatYaw(pose.transform.orientation),startRootPos:[rootPos[0],rootPos[1],rootPos[2]],startRootYaw:rootYaw};
+  anchorStatus.textContent="✋ Pergola saisie — déplace la manette droite puis relâche le Grip.";
+}
+async function endGrab(){
+  if(!grabState) return; grabState=null;
+  if(grabWasLocked){ await lockPlacement(); anchorStatus.textContent="✓ Nouvelle position verrouillée et mémorisée."; }
+  else anchorStatus.textContent="Pergola déplacée. Gâchette droite pour verrouiller.";
+}
+function updateGrab(frame){
+  if(!grabState || !grabState.source.gripSpace) return false;
+  const pose=frame.getPose(grabState.source.gripSpace,refSpace); if(!pose) return false;
+  const p=pose.transform.position, yaw=quatYaw(pose.transform.orientation);
+  rootPos[0]=grabState.startRootPos[0]+(p.x-grabState.startControllerPos[0]);
+  rootPos[1]=grabState.startRootPos[1]+(p.y-grabState.startControllerPos[1]);
+  rootPos[2]=grabState.startRootPos[2]+(p.z-grabState.startControllerPos[2]);
+  rootYaw=grabState.startRootYaw+(yaw-grabState.startControllerYaw);
+  return true;
+}
+
 function processControllerPlacement(session, nowMs){
-  if(!placed || locked) {
+  if(!placed || locked || grabState) {
     lastFrameMs=nowMs;
     return;
   }
@@ -742,7 +737,9 @@ function onXRFrame(t,frame){
 
   lastViewer=pose.views[0];
 
-  processControllerPlacement(session, t);
+  if(pendingGrabSource && !grabState){ beginGrab(pendingGrabSource,frame); pendingGrabSource=null; }
+  const grabbingNow=updateGrab(frame);
+  if(!grabbingNow) processControllerPlacement(session,t);
 
   if(persistentAnchor && persistentAnchor.anchorSpace){
     const ap=frame.getPose(persistentAnchor.anchorSpace,refSpace);
